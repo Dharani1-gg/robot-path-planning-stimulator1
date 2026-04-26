@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Robot Navigation Simulator</title>
+
+<style>
+body {
+  font-family: Arial;
+  text-align: center;
+  background: linear-gradient(135deg,#0f2027,#203a43,#2c5364);
+  color: white;
+}
+
+canvas {
+  border: 3px solid white;
+  background: white;
+  margin-top: 10px;
+}
+
+button {
+  padding: 10px;
+  margin: 5px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: bold;
+  color: white;
+}
+
+button:hover { transform: scale(1.05); }
+.active { box-shadow: 0 0 10px white; }
+
+.start{background:#2ecc71;}
+.end{background:#e74c3c;}
+.wall{background:#34495e;}
+.erase{background:#9b59b6;}
+.scan{background:#1abc9c;}
+.explore{background:#3498db;}
+.path{background:#f1c40f;color:black;}
+.clear{background:#e67e22;}
+.save{background:#16a085;}
+.load{background:#7f8c8d;}
+
+input[type=range]{width:200px;}
+</style>
+</head>
+
+<body>
+
+<h2>🤖 Robot Navigation Simulator</h2>
+<p id="status">Status: Idle</p>
+<p id="stats">⏱ Time: 0 ms | 🔢 Nodes: 0</p>
+
+<label><b>Algorithm:</b></label>
+<select id="algo">
+<option value="astar">A*</option>
+<option value="dijkstra">Dijkstra</option>
+<option value="bfs">BFS</option>
+</select>
+
+<br><br>
+
+<label>Speed:</label>
+<input type="range" id="speed" min="1" max="100" value="50">
+<span id="speedVal">50</span>
+
+<br><br>
+
+<div>
+<button class="start" onclick="setMode('start',this)">Start</button>
+<button class="end" onclick="setMode('end',this)">End</button>
+<button class="wall" onclick="setMode('wall',this)">Wall</button>
+<button class="erase" onclick="setMode('erase',this)">Erase</button>
+<br>
+<button class="scan" onclick="scan()">Scan</button>
+<button class="explore" onclick="explore()">Explore</button>
+<button class="path" onclick="runAlgo()">Find Path</button>
+<br>
+<button class="clear" onclick="clearGrid()">Clear</button>
+<button class="save" onclick="saveGrid()">Save</button>
+<button class="load" onclick="loadGrid()">Load</button>
+</div>
+
+<canvas id="grid" width="600" height="600"></canvas>
+
+<script>
+const canvas = document.getElementById("grid");
+const ctx = canvas.getContext("2d");
+
+const ROWS = 30;
+const SIZE = canvas.width / ROWS;
+
+let grid=[],start=null,end=null,mode="wall";
+let robot=null;
+
+let nodeCount=0,startTime=0;
+let speed=50;
+
+document.getElementById("speed").oninput=function(){
+  speed=this.value;
+  document.getElementById("speedVal").innerText=this.value;
+};
+
+function sleep(){
+  return new Promise(r=>setTimeout(r,(101-speed)*1.5));
+}
+
+function Node(r,c){
+  this.r=r; this.c=c; this.color="white";
+}
+
+function createGrid(){
+  grid=[];
+  for(let i=0;i<ROWS;i++){
+    let row=[];
+    for(let j=0;j<ROWS;j++) row.push(new Node(i,j));
+    grid.push(row);
+  }
+}
+
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  for(let i=0;i<ROWS;i++){
+    for(let j=0;j<ROWS;j++){
+      ctx.fillStyle=grid[i][j].color;
+      ctx.fillRect(j*SIZE,i*SIZE,SIZE,SIZE);
+      ctx.strokeRect(j*SIZE,i*SIZE,SIZE,SIZE);
+    }
+  }
+
+  if(robot){
+    ctx.fillStyle="orange";
+    ctx.beginPath();
+    ctx.arc(robot.c*SIZE+SIZE/2,robot.r*SIZE+SIZE/2,SIZE/3,0,Math.PI*2);
+    ctx.fill();
+  }
+}
+
+function setMode(m,btn){
+  mode=m;
+  document.querySelectorAll("button").forEach(b=>b.classList.remove("active"));
+  btn.classList.add("active");
+}
+
+canvas.onclick=(e)=>{
+  let rect=canvas.getBoundingClientRect();
+  let x=Math.floor((e.clientX-rect.left)/SIZE);
+  let y=Math.floor((e.clientY-rect.top)/SIZE);
+  let n=grid[y][x];
+
+  if(mode==="start"){start=n;robot=n;n.color="green";}
+  else if(mode==="end"){end=n;n.color="red";}
+  else if(mode==="wall"){n.color="black";}
+  else if(mode==="erase"){n.color="white";}
+
+  draw();
+};
+
+function neighbors(n){
+  let dirs=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,-1],[1,-1],[-1,1]];
+  let res=[];
+  for(let [dr,dc] of dirs){
+    let r=n.r+dr,c=n.c+dc;
+    if(r>=0&&c>=0&&r<ROWS&&c<ROWS){
+      if(grid[r][c].color==="black") continue;
+      if(Math.abs(dr)&&Math.abs(dc)){
+        if(grid[n.r][c].color==="black"&&grid[r][n.c].color==="black") continue;
+      }
+      res.push(grid[r][c]);
+    }
+  }
+  return res;
+}
+
+function resetStats(){
+  nodeCount=0;
+  startTime=performance.now();
+}
+
+function showStats(){
+  let t=(performance.now()-startTime).toFixed(2);
+  document.getElementById("stats").innerText=`⏱ ${t} ms | 🔢 ${nodeCount}`;
+}
+
+// ===== SCAN =====
+async function scan(){
+  for(let i=0;i<ROWS;i++){
+    for(let j=0;j<ROWS;j++){
+      let n=grid[i][j];
+      if(n!==start&&n!==end&&n.color!=="black") n.color="#85c1e9";
+      draw(); await sleep();
+    }
+  }
+}
+
+// ===== EXPLORE =====
+async function explore(){
+  if(!start)return;
+  let q=[start],vis=new Set([start]);
+
+  while(q.length){
+    let cur=q.shift(); nodeCount++;
+
+    for(let n of neighbors(cur)){
+      if(!vis.has(n)){
+        vis.add(n); q.push(n);
+        if(n!==start&&n!==end) n.color="#5dade2";
+      }
+    }
+
+    robot=cur;
+    draw();
+    await sleep();
+  }
+}
+
+// ===== ALGORITHM SELECT =====
+function runAlgo(){
+  let algo=document.getElementById("algo").value;
+  if(algo==="astar") Astar();
+  else if(algo==="dijkstra") dijkstra();
+  else bfs();
+}
+
+// ===== A* =====
+async function Astar(){
+  if(!start||!end)return;
+  resetStats();
+
+  let open=[start],g=new Map(),f=new Map(),came=new Map(),closed=new Set();
+  grid.flat().forEach(n=>{g.set(n,Infinity);f.set(n,Infinity);});
+  g.set(start,0); f.set(start,0);
+
+  while(open.length){
+    open.sort((a,b)=>f.get(a)-f.get(b));
+    let cur=open.shift(); nodeCount++;
+
+    if(cur!==start&&cur!==end) cur.color="#d5dbdb";
+
+    if(cur===end){await path(came);showStats();return;}
+
+    closed.add(cur);
+
+    for(let n of neighbors(cur)){
+      if(closed.has(n)) continue;
+
+      let cost=(n.r!=cur.r&&n.c!=cur.c)?1.4:1;
+      let temp=g.get(cur)+cost;
+
+      if(temp<g.get(n)){
+        came.set(n,cur);
+        g.set(n,temp);
+        f.set(n,temp);
+
+        if(!open.includes(n)){
+          open.push(n);
+          if(n!==start&&n!==end) n.color="#f7dc6f";
+        }
+      }
+    }
+
+    robot=cur;
+    draw();
+    await sleep();
+  }
+}
+
+// ===== DIJKSTRA =====
+async function dijkstra(){
+  if(!start||!end)return;
+  resetStats();
+
+  let dist=new Map(),prev=new Map();
+  grid.flat().forEach(n=>dist.set(n,Infinity));
+  dist.set(start,0);
+
+  let open=[start];
+
+  while(open.length){
+    open.sort((a,b)=>dist.get(a)-dist.get(b));
+    let cur=open.shift(); nodeCount++;
+
+    if(cur!==start&&cur!==end) cur.color="#d5dbdb";
+
+    for(let n of neighbors(cur)){
+      let cost=(n.r!=cur.r&&n.c!=cur.c)?1.4:1;
+      let nd=dist.get(cur)+cost;
+
+      if(nd<dist.get(n)){
+        dist.set(n,nd);
+        prev.set(n,cur);
+
+        if(!open.includes(n)){
+          open.push(n);
+          if(n!==start&&n!==end) n.color="#f7dc6f";
+        }
+      }
+    }
+
+    robot=cur;
+    draw();
+    await sleep();
+  }
+
+  await path(prev);
+  showStats();
+}
+
+// ===== BFS =====
+async function bfs(){
+  if(!start||!end)return;
+  resetStats();
+
+  let q=[start],vis=new Set([start]),par=new Map();
+
+  while(q.length){
+    let cur=q.shift(); nodeCount++;
+
+    if(cur===end){await path(par);showStats();return;}
+
+    for(let n of neighbors(cur)){
+      if(!vis.has(n)){
+        vis.add(n);
+        par.set(n,cur);
+        q.push(n);
+
+        if(n!==start&&n!==end) n.color="#58d68d";
+      }
+    }
+
+    robot=cur;
+    draw();
+    await sleep();
+  }
+}
+
+// ===== PATH =====
+async function path(map){
+  let cur=end;
+  while(map.has(cur)){
+    cur=map.get(cur);
+    if(cur!==start) cur.color="blue";
+    robot=cur;
+    draw();
+    await sleep();
+  }
+}
+
+// ===== UTIL =====
+function clearGrid(){
+  start=end=robot=null;
+  createGrid();
+  draw();
+  document.getElementById("stats").innerText="⏱ 0 ms | 🔢 0";
+}
+
+function saveGrid(){
+  localStorage.setItem("grid",JSON.stringify(grid));
+}
+
+function loadGrid(){
+  let data=JSON.parse(localStorage.getItem("grid"));
+  if(!data)return;
+  for(let i=0;i<ROWS;i++)
+    for(let j=0;j<ROWS;j++)
+      grid[i][j].color=data[i][j].color;
+  draw();
+}
+
+// INIT
+createGrid();
+draw();
+</script>
+
+</body>
+</html>
